@@ -86,11 +86,25 @@ export default function Home() {
   const [mintAmount, setMintAmount] = useState('');
   const [mintError, setMintError] = useState('');
   const [mintSuccess, setMintSuccess] = useState('');
+  const [isMinting, setIsMinting] = useState(false);
 
   const [depositUser, setDepositUser] = useState('');
   const [depositAmount, setDepositAmount] = useState('');
   const [depositError, setDepositError] = useState('');
   const [depositSuccess, setDepositSuccess] = useState('');
+  const [isAdminDepositing, setIsAdminDepositing] = useState(false);
+
+  // Admin Deduct & Burn states
+  const [deductUser, setDeductUser] = useState('');
+  const [deductAmount, setDeductAmount] = useState('');
+  const [deductError, setDeductError] = useState('');
+  const [deductSuccess, setDeductSuccess] = useState('');
+  const [isDeducting, setIsDeducting] = useState(false);
+
+  const [burnAmount, setBurnAmount] = useState('');
+  const [burnError, setBurnError] = useState('');
+  const [burnSuccess, setBurnSuccess] = useState('');
+  const [isBurning, setIsBurning] = useState(false);
 
   // Toast notification state
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -474,6 +488,7 @@ export default function Home() {
     e.preventDefault();
     setMintError('');
     setMintSuccess('');
+    setIsMinting(true);
     try {
       const res = await fetch('/api/mint', {
         method: 'POST',
@@ -492,6 +507,8 @@ export default function Home() {
       }
     } catch (e: any) {
       setMintError(e.message || 'Mint failed');
+    } finally {
+      setIsMinting(false);
     }
   };
 
@@ -499,6 +516,7 @@ export default function Home() {
     e.preventDefault();
     setDepositError('');
     setDepositSuccess('');
+    setIsAdminDepositing(true);
     try {
       const res = await fetch('/api/deposit', {
         method: 'POST',
@@ -518,6 +536,65 @@ export default function Home() {
       }
     } catch (e: any) {
       setDepositError(e.message || 'Deposit failed');
+    } finally {
+      setIsAdminDepositing(false);
+    }
+  };
+
+  const handleAdminDeduct = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setDeductError('');
+    setDeductSuccess('');
+    setIsDeducting(true);
+    try {
+      const res = await fetch('/api/admin/deduct', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: deductUser, amount: deductAmount })
+      });
+      const data = await res.json();
+      if (data.error) {
+        setDeductError(data.error);
+      } else {
+        setDeductSuccess(`Successfully deducted $${parseFloat(deductAmount).toFixed(2)} from ${deductUser}!`);
+        setDeductUser('');
+        setDeductAmount('');
+        triggerToast('Deduction completed.');
+        checkSession();
+        fetchDashboardData();
+      }
+    } catch (e: any) {
+      setDeductError(e.message || 'Deduction failed');
+    } finally {
+      setIsDeducting(false);
+    }
+  };
+
+  const handleAdminBurn = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBurnError('');
+    setBurnSuccess('');
+    setIsBurning(true);
+    try {
+      const res = await fetch('/api/admin/burn', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amount: burnAmount })
+      });
+      const data = await res.json();
+      if (data.error) {
+        setBurnError(data.error);
+      } else {
+        setBurnSuccess(`Successfully burned $${parseFloat(burnAmount).toFixed(2)} coins from the reserve!`);
+        setBurnAmount('');
+        triggerToast('Reserve supply burned.');
+        checkSession();
+        fetchDashboardData();
+      }
+    } catch (e: any) {
+      setBurnError(e.message || 'Burn failed');
+    } finally {
+      setIsBurning(false);
     }
   };
 
@@ -1232,8 +1309,8 @@ export default function Home() {
                 </div>
               )}
 
-              {/* Mint & Deposit Forms */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', marginBottom: '2.5rem', paddingBottom: '2.5rem', borderBottom: '1px solid var(--panel-border)' }}>
+              {/* Mint, Deposit, Burn, Deduct Forms */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: '1.5rem', marginBottom: '2.5rem', paddingBottom: '2.5rem', borderBottom: '1px solid var(--panel-border)' }}>
                 
                 {/* Minting */}
                 <div className="panel" style={{ background: 'rgba(255,255,255,0.01)' }}>
@@ -1248,8 +1325,8 @@ export default function Home() {
                       <label className="input-label">Amount of Coins to Mint</label>
                       <input className="input-field" type="number" step="0.01" placeholder="e.g. 50000.00" value={mintAmount} onChange={(e) => setMintAmount(e.target.value)} required />
                     </div>
-                    <button type="submit" className="btn btn-primary btn-glow" style={{ width: '100%' }}>
-                      Mint & Add to System Vault
+                    <button type="submit" disabled={isMinting} className="btn btn-primary btn-glow" style={{ width: '100%' }}>
+                      {isMinting ? 'Minting...' : 'Mint & Add to System Vault'}
                     </button>
                   </form>
                 </div>
@@ -1263,18 +1340,62 @@ export default function Home() {
                     {depositError && <div style={{ background: 'rgba(244,63,94,0.1)', color: '#f43f5e', border: '1px solid rgba(244,63,94,0.2)', padding: '0.6rem', borderRadius: '6px', fontSize: '0.8rem', marginBottom: '1rem' }}>{depositError}</div>}
                     {depositSuccess && <div style={{ background: 'rgba(6,182,212,0.1)', color: '#06b6d4', border: '1px solid rgba(6,182,212,0.2)', padding: '0.6rem', borderRadius: '6px', fontSize: '0.8rem', marginBottom: '1rem' }}>{depositSuccess}</div>}
 
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                      <div className="input-group">
-                        <label className="input-label">User Username</label>
-                        <input className="input-field" type="text" placeholder="e.g. bob" value={depositUser} onChange={(e) => setDepositUser(e.target.value)} required />
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
+                      <div className="input-group" style={{ marginBottom: 0 }}>
+                        <label className="input-label">Username</label>
+                        <input className="input-field" type="text" placeholder="bob" value={depositUser} onChange={(e) => setDepositUser(e.target.value)} required />
                       </div>
-                      <div className="input-group">
-                        <label className="input-label">Deposit Amount ($)</label>
-                        <input className="input-field" type="number" step="0.01" placeholder="e.g. 1000.00" value={depositAmount} onChange={(e) => setDepositAmount(e.target.value)} required />
+                      <div className="input-group" style={{ marginBottom: 0 }}>
+                        <label className="input-label">Amount ($)</label>
+                        <input className="input-field" type="number" step="0.01" placeholder="1000.00" value={depositAmount} onChange={(e) => setDepositAmount(e.target.value)} required />
                       </div>
                     </div>
-                    <button type="submit" className="btn btn-secondary" style={{ width: '100%', borderColor: 'var(--accent-secondary)' }}>
-                      Fund Deposit from Reserve
+                    <button type="submit" disabled={isAdminDepositing} className="btn btn-secondary" style={{ width: '100%', borderColor: 'var(--accent-secondary)' }}>
+                      {isAdminDepositing ? 'Processing...' : 'Fund Deposit from Reserve'}
+                    </button>
+                  </form>
+                </div>
+
+                {/* Burn Supply */}
+                <div className="panel" style={{ background: 'rgba(255,255,255,0.01)' }}>
+                  <h3 style={{ fontSize: '1.1rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.4rem', color: '#f43f5e' }}>
+                    <X size={18} /> Burn Reserve Supply
+                  </h3>
+                  <form onSubmit={handleAdminBurn}>
+                    {burnError && <div style={{ background: 'rgba(244,63,94,0.1)', color: '#f43f5e', border: '1px solid rgba(244,63,94,0.2)', padding: '0.6rem', borderRadius: '6px', fontSize: '0.8rem', marginBottom: '1rem' }}>{burnError}</div>}
+                    {burnSuccess && <div style={{ background: 'rgba(6,182,212,0.1)', color: '#06b6d4', border: '1px solid rgba(6,182,212,0.2)', padding: '0.6rem', borderRadius: '6px', fontSize: '0.8rem', marginBottom: '1rem' }}>{burnSuccess}</div>}
+
+                    <div className="input-group">
+                      <label className="input-label">Amount of Coins to Burn</label>
+                      <input className="input-field" type="number" step="0.01" placeholder="e.g. 5000.00" value={burnAmount} onChange={(e) => setBurnAmount(e.target.value)} required />
+                    </div>
+                    <button type="submit" disabled={isBurning} className="btn btn-primary btn-glow" style={{ width: '100%', background: 'linear-gradient(135deg, #f43f5e, #be123c)', borderColor: '#f43f5e' }}>
+                      {isBurning ? 'Burning...' : 'Permanently Burn from System Vault'}
+                    </button>
+                  </form>
+                </div>
+
+                {/* Deduct User Balance */}
+                <div className="panel" style={{ background: 'rgba(255,255,255,0.01)' }}>
+                  <h3 style={{ fontSize: '1.1rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                    <ArrowUpRight size={18} /> Debit User (Admin Deduct)
+                  </h3>
+                  <form onSubmit={handleAdminDeduct}>
+                    {deductError && <div style={{ background: 'rgba(244,63,94,0.1)', color: '#f43f5e', border: '1px solid rgba(244,63,94,0.2)', padding: '0.6rem', borderRadius: '6px', fontSize: '0.8rem', marginBottom: '1rem' }}>{deductError}</div>}
+                    {deductSuccess && <div style={{ background: 'rgba(6,182,212,0.1)', color: '#06b6d4', border: '1px solid rgba(6,182,212,0.2)', padding: '0.6rem', borderRadius: '6px', fontSize: '0.8rem', marginBottom: '1rem' }}>{deductSuccess}</div>}
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
+                      <div className="input-group" style={{ marginBottom: 0 }}>
+                        <label className="input-label">Username</label>
+                        <input className="input-field" type="text" placeholder="bob" value={deductUser} onChange={(e) => setDeductUser(e.target.value)} required />
+                      </div>
+                      <div className="input-group" style={{ marginBottom: 0 }}>
+                        <label className="input-label">Amount ($)</label>
+                        <input className="input-field" type="number" step="0.01" placeholder="100.00" value={deductAmount} onChange={(e) => setDeductAmount(e.target.value)} required />
+                      </div>
+                    </div>
+                    <button type="submit" disabled={isDeducting} className="btn btn-secondary" style={{ width: '100%', borderColor: 'var(--accent-tertiary)' }}>
+                      {isDeducting ? 'Processing...' : 'Deduct Balance to Reserve'}
                     </button>
                   </form>
                 </div>

@@ -682,3 +682,164 @@ export async function simulateSavingsInterest(userId: string) {
     client.release();
   }
 }
+
+// Admin deducts money from user's active wallet back to the Central Vault
+export async function deductCoins(adminId: string, username: string, amount: number) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // 1. Verify admin
+    const adminRes = await client.query('SELECT role FROM "user" WHERE id = $1', [adminId]);
+    if (!adminRes.rows[0] || adminRes.rows[0].role !== 'admin') {
+      throw new Error('Unauthorized: Only admins can deduct coins.');
+    }
+
+    // 2. Find target user
+    const userRes = await client.query('SELECT id, balance, username FROM "user" WHERE username = $1', [username]);
+    if (!userRes.rows[0]) {
+      throw new Error(`User with username "${username}" not found.`);
+    }
+    const user = userRes.rows[0];
+    const userBalance = parseFloat(user.balance);
+
+    if (userBalance < amount) {
+      throw new Error(`Insufficient user balance. User has ${userBalance.toFixed(2)}, cannot deduct ${amount.toFixed(2)}.`);
+    }
+
+    // 3. Find active coin blocks owned by the target user to spend
+    const walletBlocksRes = await client.query(
+      `SELECT id, amount FROM coin_blocks WHERE "ownerId" = $1 AND status = 'active' ORDER BY "mintedAt" ASC`,
+      [user.id]
+    );
+
+    let collectedAmount = 0;
+    const spentBlockIds: string[] = [];
+    for (const row of walletBlocksRes.rows) {
+      collectedAmount += parseFloat(row.amount);
+      spentBlockIds.push(row.id);
+      if (collectedAmount >= amount) break;
+    }
+
+    if (collectedAmount < amount) {
+      throw new Error('Coin tracing error: Unable to find active coins matching the user balance.');
+    }
+
+    const txId = 'tx_' + Math.random().toString(36).substring(2, 15);
+
+    // 4. Record deduct transaction
+    await client.query(
+      `INSERT INTO transactions (id, "senderId", "receiverId", amount, fee, type, description)
+       VALUES ($1, $2, NULL, $3, 0.00, 'deduct', $4)`,
+      [txId, user.id, amount, `Admin balance deduction of ${amount.toFixed(2)} from ${username}.`]
+    );
+
+    // 5. Spend user blocks
+    await client.query(
+      `UPDATE coin_blocks SET status = 'spent', "spentAt" = NOW(), "spentByTransactionId" = $1 WHERE id = ANY($2)`,
+      [txId, spentBlockIds]
+    );
+
+    // 6. If we took too much, return change to the user
+    if (collectedAmount > amount) {
+      const changeAmount = collectedAmount - amount;
+      const changeBlockId = 'coin_' + Math.random().toString(36).substring(2, 15);
+      const changeSerial = generateSerialNumber();
+      await client.query(
+        `INSERT INTO coin_blocks (id, "serialNumber", amount, "ownerId", "parentBlockId", "createdByTransactionId", status)
+         VALUES ($1, $2, $3, $4, $5, $6, 'active')`,
+        [changeBlockId, changeSerial, changeAmount, user.id, spentBlockIds[0], txId]
+      );
+    }
+
+    // 7. Recreate the deducted coins in the System Reserve Vault (ownerId = NULL)
+    const vaultBlockId = 'coin_' + Math.random().toString(36).substring(2, 15);
+    const vaultSerial = generateSerialNumber();
+    await client.query(
+      `INSERT INTO coin_blocks (id, "serialNumber", amount, "ownerId", "parentBlockId", "createdByTransactionId", status)
+       VALUES ($1, $2, $3, NULL, $4, $5, 'active')`,
+      [vaultBlockId, vaultSerial, amount, spentBlockIds[0], txId]
+    );
+
+    // 8. Update user balance
+    await client.query(`UPDATE "user" SET balance = balance - $1 WHERE id = $2`, [amount, user.id]);
+
+    await client.query('COMMIT');
+    await logAudit(adminId, 'DEDUCT_COINS', `Deducted ${amount.toFixed(2)} from ${username}. Transaction: ${txId}`, false, client);
+    return { success: true, transactionId: txId };
+  } catch (error: any) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+// Admin burns money from the System Reserve Vault (destroying supply)
+export async function burnCoins(adminId: string, amount: number) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // 1. Verify admin
+    const adminRes = await client.query('SELECT role FROM "user" WHERE id = $1', [adminId]);
+    if (!adminRes.rows[0] || adminRes.rows[0].role !== 'admin') {
+      throw new Error('Unauthorized: Only admins can burn coins.');
+    }
+
+    // 2. Find and spend coin blocks from the Central Vault (ownerId IS NULL) to burn
+    const vaultBlocksRes = await client.query(
+      `SELECT id, amount FROM coin_blocks WHERE "ownerId" IS NULL AND status = 'active' ORDER BY "mintedAt" ASC`
+    );
+
+    let collectedAmount = 0;
+    const spentBlockIds: string[] = [];
+    for (const row of vaultBlocksRes.rows) {
+      collectedAmount += parseFloat(row.amount);
+      spentBlockIds.push(row.id);
+      if (collectedAmount >= amount) break;
+    }
+
+    if (collectedAmount < amount) {
+      throw new Error(
+        `System Reserve Vault has insufficient balance (${collectedAmount.toFixed(2)}) to burn ${amount.toFixed(2)}.`
+      );
+    }
+
+    const txId = 'tx_' + Math.random().toString(36).substring(2, 15);
+
+    // 3. Record burn transaction
+    await client.query(
+      `INSERT INTO transactions (id, "senderId", "receiverId", amount, fee, type, description)
+       VALUES ($1, NULL, NULL, $2, 0.00, 'burn', $3)`,
+      [txId, amount, `Admin burned ${amount.toFixed(2)} coins from the System Reserve Vault.`]
+    );
+
+    // 4. Mark vault blocks as spent (burned)
+    await client.query(
+      `UPDATE coin_blocks SET status = 'spent', "spentAt" = NOW(), "spentByTransactionId" = $1 WHERE id = ANY($2)`,
+      [txId, spentBlockIds]
+    );
+
+    // 5. If we took too much, return change to the vault
+    if (collectedAmount > amount) {
+      const changeAmount = collectedAmount - amount;
+      const vaultChangeBlockId = 'coin_' + Math.random().toString(36).substring(2, 15);
+      const vaultChangeSerial = generateSerialNumber();
+      await client.query(
+        `INSERT INTO coin_blocks (id, "serialNumber", amount, "ownerId", "parentBlockId", "createdByTransactionId", status)
+         VALUES ($1, $2, $3, NULL, $4, $5, 'active')`,
+        [vaultChangeBlockId, vaultChangeSerial, changeAmount, spentBlockIds[0], txId]
+      );
+    }
+
+    await client.query('COMMIT');
+    await logAudit(adminId, 'BURN_COINS', `Burned ${amount.toFixed(2)} coins from Central Vault. Transaction: ${txId}`, false, client);
+    return { success: true, transactionId: txId };
+  } catch (error: any) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
