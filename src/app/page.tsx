@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Wallet, 
   PiggyBank, 
@@ -179,6 +179,15 @@ export default function Home() {
     checkSession();
   }, []);
 
+  // Keep track of the latest user balance using a ref to prevent stale closure loop toasts
+  const lastBalanceRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (user) {
+      lastBalanceRef.current = parseFloat(user.balance);
+    }
+  }, [user?.balance]);
+
   // Poll for real-time updates every 5 seconds
   useEffect(() => {
     if (user) {
@@ -189,14 +198,16 @@ export default function Home() {
           .then(res => res.json())
           .then(data => {
             if (data.authenticated) {
+              const newBalance = parseFloat(data.user.balance);
               // If balance changed, trigger toast!
-              if (user && parseFloat(data.user.balance) !== parseFloat(user.balance)) {
-                const diff = parseFloat(data.user.balance) - parseFloat(user.balance);
+              if (lastBalanceRef.current !== null && newBalance !== lastBalanceRef.current) {
+                const diff = newBalance - lastBalanceRef.current;
                 if (diff > 0) {
                   triggerToast(`Received +$${diff.toFixed(2)} in real time!`);
                 } else {
                   triggerToast(`Debited $${Math.abs(diff).toFixed(2)} from your wallet.`);
                 }
+                lastBalanceRef.current = newBalance;
               }
               setUser(data.user);
             }
@@ -639,6 +650,87 @@ export default function Home() {
   const totalBalance = user.balance;
   const overdraftLimit = user.overdraftLimit;
   const availableFunds = totalBalance + overdraftLimit;
+
+  // Helper to resolve transaction details for perfect history tracking
+  const getTxDetails = (tx: any) => {
+    const isSender = tx.senderId === user.id;
+    const isReceiver = tx.receiverId === user.id;
+    const isMint = tx.type === 'mint';
+    const isSavingsDeposit = tx.type === 'savings_deposit';
+    const isSavingsWithdrawal = tx.type === 'savings_withdrawal';
+    const isFee = tx.type === 'fee_payment';
+    const isDeposit = tx.type === 'deposit';
+
+    let title = tx.description || 'Transaction';
+    let subtext = new Date(tx.createdAt || tx.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ', ' + new Date(tx.createdAt || tx.created_at).toLocaleDateString([], { month: 'short', day: 'numeric' });
+    let icon = <Activity size={15} />;
+    let iconColor = 'var(--text-muted)';
+    let iconBg = 'rgba(255, 255, 255, 0.05)';
+    let amountSign = '';
+    let amountColor = 'var(--text-primary)';
+
+    if (isMint) {
+      title = 'Admin Mint Credit';
+      icon = <Plus size={15} />;
+      iconColor = '#06b6d4'; // Cyan
+      iconBg = 'rgba(6, 182, 212, 0.1)';
+      amountSign = '+';
+      amountColor = '#06b6d4';
+    } else if (isSavingsDeposit) {
+      title = 'Savings Stash';
+      icon = <PiggyBank size={15} />;
+      iconColor = '#8b5cf6'; // Purple
+      iconBg = 'rgba(139, 92, 246, 0.1)';
+      amountSign = '-';
+      amountColor = '#f43f5e';
+    } else if (isSavingsWithdrawal) {
+      title = 'Savings Withdrawal';
+      icon = <Wallet size={15} />;
+      iconColor = '#06b6d4'; // Cyan
+      iconBg = 'rgba(6, 182, 212, 0.1)';
+      amountSign = '+';
+      amountColor = '#06b6d4';
+    } else if (isFee) {
+      title = 'Ledger Gas Fee';
+      icon = <Activity size={15} />;
+      iconColor = '#f43f5e'; // Rose
+      iconBg = 'rgba(244, 63, 94, 0.1)';
+      amountSign = '-';
+      amountColor = '#f43f5e';
+    } else if (isSender) {
+      title = `Sent to @${tx.receiver_username || 'vault'}`;
+      icon = <ArrowUpRight size={15} />;
+      iconColor = '#f43f5e'; // Rose
+      iconBg = 'rgba(244, 63, 94, 0.1)';
+      amountSign = '-';
+      amountColor = '#f43f5e';
+    } else if (isReceiver) {
+      if (isDeposit && !tx.senderId) {
+        title = tx.description?.toLowerCase().includes('interest') ? 'Savings Interest' : 'Mint Deposit';
+        icon = <TrendingUp size={15} />;
+        iconColor = '#fbbf24'; // Gold
+        iconBg = 'rgba(251, 191, 36, 0.1)';
+      } else {
+        title = `Received from @${tx.sender_username || 'system'}`;
+        icon = <ArrowDownLeft size={15} />;
+        iconColor = '#06b6d4'; // Cyan
+        iconBg = 'rgba(6, 182, 212, 0.1)';
+      }
+      amountSign = '+';
+      amountColor = '#06b6d4';
+    }
+
+    // Append custom request note/justification if it doesn't duplicate structural logs
+    if (tx.description && 
+        tx.description !== title && 
+        !tx.description.includes('Transferred') && 
+        !tx.description.includes('Withdrew') && 
+        !tx.description.includes('interest')) {
+      subtext = `${tx.description} • ${subtext}`;
+    }
+
+    return { title, subtext, icon, iconColor, iconBg, amountSign, amountColor };
+  };
 
   // Render Client Dashboard
   return (
@@ -1318,46 +1410,37 @@ export default function Home() {
             {/* List of Recent Transactions */}
             <h4 style={{ fontSize: '0.85rem', textTransform: 'uppercase', color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>Recent Ledger Entries</h4>
             
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.50rem' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', maxHeight: '380px', overflowY: 'auto', paddingRight: '4px' }}>
               {transactions.length === 0 ? (
                 <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', fontStyle: 'italic' }}>No transactions recorded.</p>
               ) : (
-                transactions.slice(0, 5).map((tx) => {
-                  const isSender = tx.senderId === user.id;
-                  const isReceiver = tx.receiverId === user.id;
-                  const isFee = tx.type === 'fee_payment';
-                  const isSavings = tx.type === 'savings_deposit' || tx.type === 'savings_withdrawal';
-                  const isMint = tx.type === 'mint';
-
-                  let displaySign = '';
-                  let amountClass = 'amount-neutral';
-                  let displayDesc = tx.description;
-
-                  if (isSender) {
-                    displaySign = '-';
-                    amountClass = 'amount-negative';
-                  } else if (isReceiver) {
-                    displaySign = '+';
-                    amountClass = 'amount-positive';
-                  }
-
-                  if (isMint) {
-                    displaySign = '+';
-                    amountClass = 'amount-positive';
-                  }
-
+                transactions.map((tx) => {
+                  const details = getTxDetails(tx);
                   return (
-                    <div key={tx.id} className="item-row" style={{ padding: '0.6rem 0.8rem', marginBottom: 0 }}>
-                      <div className="item-details" style={{ maxWidth: '70%' }}>
-                        <span className="item-title" style={{ fontSize: '0.85rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {displayDesc}
+                    <div key={tx.id} className="item-row" style={{ padding: '0.6rem 0.8rem', marginBottom: 0, display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                      <div style={{ 
+                        width: '32px', 
+                        height: '32px', 
+                        borderRadius: '8px', 
+                        background: details.iconBg, 
+                        color: details.iconColor, 
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        justifyContent: 'center',
+                        flexShrink: 0
+                      }}>
+                        {details.icon}
+                      </div>
+                      <div className="item-details" style={{ flex: 1, minWidth: 0 }}>
+                        <span className="item-title" style={{ fontSize: '0.85rem', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block', color: 'var(--text-primary)' }}>
+                          {details.title}
                         </span>
-                        <span className="item-sub" style={{ fontSize: '0.7rem' }}>
-                          {new Date(tx.createdAt || tx.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} | {tx.type}
+                        <span className="item-sub" style={{ fontSize: '0.7rem', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text-secondary)' }}>
+                          {details.subtext}
                         </span>
                       </div>
-                      <span className={`item-amount ${amountClass}`} style={{ fontSize: '0.9rem' }}>
-                        {displaySign}${parseFloat(tx.amount).toFixed(2)}
+                      <span style={{ fontSize: '0.9rem', fontWeight: 700, color: details.amountColor, flexShrink: 0 }}>
+                        {details.amountSign}${parseFloat(tx.amount).toFixed(2)}
                       </span>
                     </div>
                   );
