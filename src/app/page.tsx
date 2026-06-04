@@ -22,7 +22,8 @@ import {
   Activity,
   Layers,
   ChevronRight,
-  Info
+  Info,
+  Search
 } from 'lucide-react';
 import { signIn, signUp, signOut } from '@/lib/auth-client';
 
@@ -42,7 +43,7 @@ export default function Home() {
   const [authSuccess, setAuthSuccess] = useState('');
 
   // Dashboard state
-  const [activeTab, setActiveTab] = useState<'wallet' | 'savings' | 'requests' | 'coins' | 'admin'>('wallet');
+  const [activeTab, setActiveTab] = useState<'wallet' | 'savings' | 'requests' | 'coins' | 'admin' | 'explorer'>('wallet');
   const [transactions, setTransactions] = useState<any[]>([]);
   const [activeCoins, setActiveCoins] = useState<any[]>([]);
   const [spentCoins, setSpentCoins] = useState<any[]>([]);
@@ -105,6 +106,12 @@ export default function Home() {
   const [burnError, setBurnError] = useState('');
   const [burnSuccess, setBurnSuccess] = useState('');
   const [isBurning, setIsBurning] = useState(false);
+
+  // Explorer states
+  const [explorerSearchQuery, setExplorerSearchQuery] = useState('');
+  const [explorerResult, setExplorerResult] = useState<any>(null);
+  const [explorerError, setExplorerError] = useState('');
+  const [isExplorerSearching, setIsExplorerSearching] = useState(false);
 
   // Toast notification state
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -617,6 +624,32 @@ export default function Home() {
     }
   };
 
+  const handleSearchTx = async (txId: string) => {
+    if (!txId) return;
+    setIsExplorerSearching(true);
+    setExplorerError('');
+    setExplorerResult(null);
+    try {
+      const res = await fetch(`/api/transactions/${txId}`);
+      const data = await res.json();
+      if (data.error) {
+        setExplorerError(data.error);
+      } else {
+        setExplorerResult(data);
+      }
+    } catch (e: any) {
+      setExplorerError(e.message || 'Transaction search failed.');
+    } finally {
+      setIsExplorerSearching(false);
+    }
+  };
+
+  const handleExploreTx = (txId: string) => {
+    setExplorerSearchQuery(txId);
+    setActiveTab('explorer');
+    handleSearchTx(txId);
+  };
+
   // Update custom settings
   const handleUpdateUsername = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -858,6 +891,9 @@ export default function Home() {
         </button>
         <button onClick={() => setActiveTab('coins')} className={`tab-btn ${activeTab === 'coins' ? 'active' : ''}`}>
           <Compass size={16} style={{ marginRight: '0.4rem', verticalAlign: 'text-bottom' }} /> Coin Tracing
+        </button>
+        <button onClick={() => setActiveTab('explorer')} className={`tab-btn ${activeTab === 'explorer' ? 'active' : ''}`}>
+          <Search size={16} style={{ marginRight: '0.4rem', verticalAlign: 'text-bottom' }} /> Explorer
         </button>
         {user.role === 'admin' && (
           <button onClick={() => setActiveTab('admin')} className={`tab-btn ${activeTab === 'admin' ? 'active' : ''}`} style={{ borderColor: 'rgba(251, 191, 36, 0.3)' }}>
@@ -1276,6 +1312,139 @@ export default function Home() {
             </div>
           )}
 
+          {/* TAB 6: EXPLORER */}
+          {activeTab === 'explorer' && (
+            <div className="panel">
+              <h2 style={{ marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Search size={28} style={{ color: 'var(--accent-secondary)' }} /> Ledger Transaction Explorer
+              </h2>
+              <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem', fontSize: '0.9rem' }}>
+                Search any transaction ID (txid) on the CoinFlow network to trace its UTXO inputs, outputs, fee routing, and cryptographic metadata.
+              </p>
+
+              <form onSubmit={(e) => { e.preventDefault(); handleSearchTx(explorerSearchQuery); }} style={{ display: 'flex', gap: '0.75rem', marginBottom: '2rem' }}>
+                <input 
+                  className="input-field" 
+                  style={{ marginBottom: 0, flex: 1, fontFamily: 'monospace' }} 
+                  type="text" 
+                  placeholder="Enter Transaction ID (e.g. tx_abc123...)" 
+                  value={explorerSearchQuery} 
+                  onChange={(e) => setExplorerSearchQuery(e.target.value)} 
+                  required 
+                />
+                <button type="submit" disabled={isExplorerSearching} className="btn btn-primary btn-glow" style={{ whiteSpace: 'nowrap' }}>
+                  {isExplorerSearching ? 'Querying...' : 'Query Ledger'}
+                </button>
+              </form>
+
+              {explorerError && (
+                <div style={{ background: 'rgba(244,63,94,0.1)', color: '#f43f5e', border: '1px solid rgba(244,63,94,0.2)', padding: '1rem', borderRadius: '8px', fontSize: '0.85rem' }}>
+                  <strong>Error:</strong> {explorerError}
+                </div>
+              )}
+
+              {explorerResult && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+                  
+                  {/* Tx Summary */}
+                  <div className="panel" style={{ background: 'rgba(255,255,255,0.01)', border: '1px solid var(--panel-border)', padding: '1.25rem' }}>
+                    <h3 style={{ fontSize: '1rem', borderBottom: '1px solid var(--panel-border)', paddingBottom: '0.5rem', marginBottom: '1rem', color: 'var(--accent-secondary)' }}>
+                      Transaction Overview
+                    </h3>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem', fontSize: '0.85rem' }}>
+                      <div>
+                        <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>Transaction ID</div>
+                        <div style={{ fontFamily: 'monospace', fontWeight: 600, color: 'var(--accent-secondary)', marginTop: '0.2rem' }}>{explorerResult.transaction.id}</div>
+                      </div>
+                      <div>
+                        <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>Type</div>
+                        <div style={{ textTransform: 'uppercase', fontWeight: 700, color: 'var(--accent-primary)', marginTop: '0.2rem', fontSize: '0.8rem' }}>{explorerResult.transaction.type}</div>
+                      </div>
+                      <div>
+                        <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>Total Amount</div>
+                        <div style={{ fontWeight: 700, color: '#fff', marginTop: '0.2rem' }}>${parseFloat(explorerResult.transaction.amount).toFixed(2)}</div>
+                      </div>
+                      <div>
+                        <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>Network Fee</div>
+                        <div style={{ fontWeight: 700, color: 'var(--accent-tertiary)', marginTop: '0.2rem' }}>${parseFloat(explorerResult.transaction.fee).toFixed(2)}</div>
+                      </div>
+                      <div>
+                        <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>Sender</div>
+                        <div style={{ marginTop: '0.2rem', fontWeight: 600 }}>{explorerResult.transaction.sender_username ? `@${explorerResult.transaction.sender_username} (${explorerResult.transaction.sender_name})` : 'System / Central Reserve'}</div>
+                      </div>
+                      <div>
+                        <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>Receiver</div>
+                        <div style={{ marginTop: '0.2rem', fontWeight: 600 }}>{explorerResult.transaction.receiver_username ? `@${explorerResult.transaction.receiver_username} (${explorerResult.transaction.receiver_name})` : 'System / Central Reserve'}</div>
+                      </div>
+                      <div style={{ gridColumn: 'span 2' }}>
+                        <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>Description / Payload</div>
+                        <div style={{ marginTop: '0.2rem', fontStyle: 'italic' }}>{explorerResult.transaction.description || 'No description payload attached.'}</div>
+                      </div>
+                      <div style={{ gridColumn: 'span 2' }}>
+                        <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>Timestamp</div>
+                        <div style={{ marginTop: '0.2rem' }}>{new Date(explorerResult.transaction.createdAt || explorerResult.transaction.created_at).toLocaleString()}</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* UTXO Inputs & Outputs Visual Diagram */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
+                    
+                    {/* Inputs Spent */}
+                    <div className="panel" style={{ background: 'rgba(244,63,94,0.02)', borderColor: 'rgba(244,63,94,0.1)' }}>
+                      <h3 style={{ fontSize: '0.95rem', color: '#f43f5e', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                        <ArrowUpRight size={16} /> Consumed Inputs (Spent Coin Blocks)
+                      </h3>
+                      {explorerResult.spentBlocks.length === 0 ? (
+                        <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', fontStyle: 'italic' }}>No coin blocks consumed as input (e.g. system minting / genesis credit).</p>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                          {explorerResult.spentBlocks.map((cb: any) => (
+                            <div key={cb.id} style={{ background: 'rgba(255,255,255,0.01)', border: '1px solid var(--panel-border)', padding: '0.6rem 0.8rem', borderRadius: '6px', fontSize: '0.8rem' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600 }}>
+                                <span style={{ fontFamily: 'monospace' }}>{cb.serialNumber}</span>
+                                <span style={{ color: '#f43f5e' }}>-${parseFloat(cb.amount).toFixed(2)}</span>
+                              </div>
+                              <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginTop: '0.2rem' }}>
+                                Owner: {cb.owner_username ? `@${cb.owner_username}` : 'Central Vault'}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Outputs Created */}
+                    <div className="panel" style={{ background: 'rgba(6,182,212,0.02)', borderColor: 'rgba(6,182,212,0.1)' }}>
+                      <h3 style={{ fontSize: '0.95rem', color: '#06b6d4', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                        <ArrowDownLeft size={16} /> Created Outputs (New Coin Blocks)
+                      </h3>
+                      {explorerResult.createdBlocks.length === 0 ? (
+                        <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', fontStyle: 'italic' }}>No coin blocks created (e.g. system supply burn).</p>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                          {explorerResult.createdBlocks.map((cb: any) => (
+                            <div key={cb.id} style={{ background: 'rgba(255,255,255,0.01)', border: '1px solid var(--panel-border)', padding: '0.6rem 0.8rem', borderRadius: '6px', fontSize: '0.8rem' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600 }}>
+                                <span style={{ fontFamily: 'monospace' }}>{cb.serialNumber}</span>
+                                <span style={{ color: '#06b6d4' }}>+${parseFloat(cb.amount).toFixed(2)}</span>
+                              </div>
+                              <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginTop: '0.2rem' }}>
+                                Owner: {cb.owner_username ? `@${cb.owner_username}` : 'Central Vault'} | Status: {cb.status}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                  </div>
+
+                </div>
+              )}
+            </div>
+          )}
+
           {/* TAB 5: ADMIN CONSOLE */}
           {activeTab === 'admin' && user.role === 'admin' && (
             <div className="panel">
@@ -1556,9 +1725,28 @@ export default function Home() {
                         <span className="item-title" style={{ fontSize: '0.85rem', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block', color: 'var(--text-primary)' }}>
                           {details.title}
                         </span>
-                        <span className="item-sub" style={{ fontSize: '0.7rem', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text-secondary)' }}>
-                          {details.subtext}
-                        </span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginTop: '0.1rem' }}>
+                          <button 
+                            onClick={() => handleExploreTx(tx.id)}
+                            style={{ 
+                              background: 'rgba(6,182,212,0.1)', 
+                              border: 'none', 
+                              color: '#06b6d4', 
+                              fontSize: '0.65rem', 
+                              fontFamily: 'monospace', 
+                              cursor: 'pointer', 
+                              padding: '0.1rem 0.35rem', 
+                              borderRadius: '4px',
+                              fontWeight: 600
+                            }}
+                            title="Click to explore transaction details"
+                          >
+                            {tx.id}
+                          </button>
+                          <span className="item-sub" style={{ fontSize: '0.7rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text-secondary)' }}>
+                            • {details.subtext}
+                          </span>
+                        </div>
                       </div>
                       <span style={{ fontSize: '0.9rem', fontWeight: 700, color: details.amountColor, flexShrink: 0 }}>
                         {details.amountSign}${parseFloat(tx.amount).toFixed(2)}
